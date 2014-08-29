@@ -2,6 +2,7 @@ package main
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	log "github.com/Sirupsen/logrus"
 	"github.com/aybabtme/parajson"
@@ -88,14 +89,19 @@ func auditCommand(abort <-chan struct{}) cli.Command {
 		Name:  "cfg",
 		Usage: "path to the JSON config file",
 	}
+	buildModelFlag := cli.StringFlag{
+		Name:  "build-model",
+		Usage: "path to a gzip'd JSON file representing all the keys in the source bucket",
+	}
 	modelFlag := cli.StringFlag{
 		Name:  "model",
-		Usage: "path to a gzip'd JSON file representing all the keys in the source bucket",
+		Usage: "path to a JSON file representing model of the keys in the source bucket",
 	}
 
 	doAudit := func(ctx *cli.Context) {
 
 		go func() {
+			time.Sleep(time.Second)
 			// exposes pprof
 			addr := "127.0.0.1:6060"
 			log.Infof("listening on http://%s/debug/pprof", addr)
@@ -103,7 +109,13 @@ func auditCommand(abort <-chan struct{}) cli.Command {
 		}()
 
 		cfg := mustConfig(ctx, cfgFlag)
-		model := mustBuildModel(ctx, modelFlag, abort)
+		var model *bucketModel
+		if ctx.String(buildModelFlag.Name) != "" {
+			model = mustBuildModel(ctx, buildModelFlag, abort)
+		} else {
+			model = mustRetrieveModel(ctx, modelFlag)
+		}
+
 		v := newVerifier(cfg, *model, abort)
 		if err := v.execute(); err != nil {
 			log.Fatalln(err)
@@ -116,7 +128,7 @@ func auditCommand(abort <-chan struct{}) cli.Command {
 		Description: strings.TrimSpace(`
 Audits the keys of two buckets match, picking keys to audit randomly based on
 a model built from an existing list of the source bucket.`),
-		Flags:  []cli.Flag{cfgFlag, modelFlag},
+		Flags:  []cli.Flag{cfgFlag, modelFlag, buildModelFlag},
 		Action: doAudit,
 	}
 }
@@ -196,26 +208,28 @@ func mustBuildModel(ctx *cli.Context, f cli.StringFlag, abort <-chan struct{}) *
 		return &s3.Key{}
 	})
 
-	keys := make(chan *s3.Key, n*2)
+	sem := make(chan struct{}, 1)
 	go func() {
-		defer close(keys)
-
-		for {
-			select {
-			case kiface, open := <-ifaceC:
-				if !open {
-					return
-				}
-				keys <- kiface.(*s3.Key)
-			case err := <-errc:
-				if err != nil {
-					fail(ctx, "error: reading keys from list: %v", err)
-				}
-			}
+		for err := range errc {
+			fail(ctx, "error: reading keys from list: %v", err)
 		}
+		sem <- struct{}{}
 	}()
+	model := buildModel(ifaceC, abort)
+	<-sem
+	return model
+}
 
-	return buildModel(keys, abort)
+func mustRetrieveModel(ctx *cli.Context, f cli.StringFlag) *bucketModel {
+	filename := mustString(ctx, f)
+	file := mustOpen(ctx, filename)
+	defer func() { _ = file.Close() }()
+	var model bucketModel
+	err := json.NewDecoder(file).Decode(&model)
+	if err != nil {
+		fail(ctx, "error: can't load model from file %q: %v", filename, err)
+	}
+	return &model
 }
 
 func fail(c *cli.Context, format string, args ...interface{}) {

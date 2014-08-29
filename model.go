@@ -30,7 +30,25 @@ func (b bucketModel) MarshalJSON() ([]byte, error) {
 	}{Depth: depths, KeyCount: b.keyCount}, "", "   ")
 }
 
-func buildModel(keys <-chan *s3.Key, abort <-chan struct{}) *bucketModel {
+func (b *bucketModel) UnmarshalJSON(p []byte) error {
+	type depthLevel struct {
+		Level int `json:"level"`
+		Count int `json:"count"`
+	}
+	var d struct {
+		Depth    []depthLevel `json:"depths"`
+		KeyCount int          `json:"key_count"`
+	}
+	err := json.Unmarshal(p, &d)
+	b.depths = make([]int, len(d.Depth))
+	for _, depthL := range d.Depth {
+		b.depths[depthL.Level] = depthL.Count
+	}
+	b.keyCount = d.KeyCount
+	return err
+}
+
+func buildModel(keys <-chan interface{}, abort <-chan struct{}) *bucketModel {
 	log.Info("computing model...")
 	defer log.Info("done!")
 	depthMap := make(map[int]int)
@@ -45,7 +63,7 @@ loop:
 		default:
 		}
 		count++
-		depth := strings.Count(key.Key, "/")
+		depth := strings.Count(key.(*s3.Key).Key, "/")
 		depthMap[depth]++
 		if depth > maxDepth {
 			maxDepth = depth
