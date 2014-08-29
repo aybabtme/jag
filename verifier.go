@@ -14,9 +14,6 @@ const (
 	// MaxList is the maximum number of keys to accept from a call to LIST an s3
 	// prefix.
 	MaxList = 10000
-	// MaxDepth is an arbitrary assumption about the depth of the bucket under
-	// test. A proper value would be computed from a list of all the keys.
-	MaxDepth = 20
 )
 
 func awsBucket(a awsConfig) *s3.Bucket {
