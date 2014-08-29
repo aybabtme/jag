@@ -8,13 +8,15 @@ import (
 	"launchpad.net/goamz/s3"
 	"math/rand"
 	"path"
+	"sync"
 	"time"
 )
 
 const (
 	// MaxList is the maximum number of keys to accept from a call to LIST an s3
 	// prefix.
-	MaxList = 10000
+	MaxList    = 10000
+	RetryLimit = 10
 )
 
 func awsBucket(a awsConfig) *s3.Bucket {
@@ -83,7 +85,17 @@ func (v *verifier) verifySamples(r *rand.Rand, now time.Time) error {
 			}).Error("couldn't parse LastModified time for this key")
 			return false
 		}
-		return modtime.After(oldest) && modtime.Before(youngest)
+		llog := log.WithField("modtime", modtime)
+		if !modtime.After(oldest) {
+			llog.Debug("decided it's too old")
+			return false
+		}
+		if !modtime.Before(youngest) {
+			llog.Debug("decided it's too young")
+			return false
+		}
+		llog.Debug("right time range")
+		return true
 	}
 
 	log.Infof("randomly sampling %d keys from bucket %q", v.cfg.CheckCount, v.src.Name)
@@ -104,20 +116,44 @@ func (v *verifier) verifySamples(r *rand.Rand, now time.Time) error {
 func (v *verifier) sampleKeysWithConstraint(r *rand.Rand, accept func(s3.Key) bool) ([]s3.Key, error) {
 	count := v.cfg.CheckCount
 	set := make(map[s3.Key]struct{}, count)
+
 	for len(set) != count {
+		var wg sync.WaitGroup
+		sampleC := make(chan s3.Key, count)
+		errC := make(chan error, count)
+
 		select {
 		case <-v.abort:
 			log.Warn("verifier: aborting keys sampling")
 			return nil, nil
 		default:
 		}
-		log.WithField("samples", len(set)).Debug("sampling a random key")
-		sample, err := v.sampleRandomKey(r, accept)
-		if err != nil {
+		for i := 0; i < count; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				log.WithField("samples", len(set)).Debug("sampling a random key")
+				sample, err := v.sampleRandomKey(r, accept)
+				if err != nil {
+					errC <- err
+				} else {
+					sampleC <- *sample
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(sampleC)
+		close(errC)
+		for sample := range sampleC {
+			set[sample] = struct{}{}
+		}
+
+		if err := <-errC; err != nil {
 			return nil, err
 		}
-		set[*sample] = struct{}{}
-		log.WithField("samples", len(set)).Debug("found a sample")
+		log.WithField("samples", len(set)).Debug("found samples")
+
 	}
 	keys := make([]s3.Key, 0, count)
 	for k := range set {
@@ -135,11 +171,13 @@ func (v *verifier) sampleRandomKey(r *rand.Rand, accept func(s3.Key) bool) (*s3.
 	maybePickKey := func(depth int, key s3.Key) bool {
 		p := v.probThatKeyAtDepth(depth)
 		dice := r.Float64()
+		accepted := dice <= p
 		log.WithFields(log.Fields{
-			"dice": dice,
-			"p":    p,
+			"dice":     dice,
+			"p":        p,
+			"accepted": accepted,
 		}).Warn("rolling dice")
-		return dice <= p
+		return accepted
 	}
 
 	var walkNode func(depth int, prefix string) (*s3.Key, bool, error)
@@ -158,7 +196,7 @@ func (v *verifier) sampleRandomKey(r *rand.Rand, accept func(s3.Key) bool) (*s3.
 		}).Debug("walking a depth")
 
 		// enumerate the keys and the children from here
-		resp, err := v.src.List(normalizePath(prefix), "/", "", MaxList)
+		resp, err := listBkt(v.src, normalizePath(prefix), MaxList)
 		if err != nil {
 			return nil, false, err
 		}
@@ -167,6 +205,7 @@ func (v *verifier) sampleRandomKey(r *rand.Rand, accept func(s3.Key) bool) (*s3.
 		if err != nil {
 			return nil, false, err
 		}
+		shuffleKeys(r, candidates)
 
 		log.WithFields(log.Fields{
 			"initial": len(resp.Contents),
@@ -223,9 +262,22 @@ func (v *verifier) verifyKeysMatch(keys []s3.Key) error {
 	return nil
 }
 
+func listBkt(bkt *s3.Bucket, path string, limit int) (*s3.ListResp, error) {
+	var resp *s3.ListResp
+	var err error
+	for i := 0; i < RetryLimit; i++ {
+		resp, err = bkt.List(path, "/", "", limit)
+		if err != nil {
+			return resp, err
+		}
+	}
+	return resp, err
+}
+
 func (v *verifier) verifyKey(want s3.Key) error {
 	log.WithField("key", want.Key).Debug("verifying a key")
-	res, err := v.dst.List(want.Key, "", "", 1)
+
+	res, err := listBkt(v.dst, want.Key, 1)
 	if err != nil {
 		return err
 	}
@@ -286,6 +338,13 @@ func filterKeys(candidates []s3.Key, accept func(s3.Key) bool) ([]s3.Key, error)
 }
 
 func shuffle(r *rand.Rand, arr []string) {
+	for i := range arr {
+		j := r.Intn(i + 1)
+		arr[i], arr[j] = arr[j], arr[i]
+	}
+}
+
+func shuffleKeys(r *rand.Rand, arr []s3.Key) {
 	for i := range arr {
 		j := r.Intn(i + 1)
 		arr[i], arr[j] = arr[j], arr[i]
