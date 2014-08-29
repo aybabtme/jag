@@ -1,0 +1,19 @@
+{
+   "random_seed": 42,
+   "check_count": 30,
+   "check_younger": "48h0m0s",
+   "check_older": "336h0m0s",
+   "check_frequency": "20m0s",
+   "source": {
+      "bucket": "my_bucket",
+      "region": "us-east-1",
+      "access_key": "something",
+      "secret_key": "somethingelse"
+   },
+   "destination": {
+      "bucket": "my_bucket",
+      "region": "us-east-1",
+      "access_key": "something",
+      "secret_key": "somethingelse"
+   }
+}
