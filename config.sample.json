@@ -1,8 +1,8 @@
 {
    "random_seed": 42,
    "check_count": 30,
-   "check_younger": "48h0m0s",
-   "check_older": "336h0m0s",
+   "check_youngest": "48h0m0s",
+   "check_oldest": "336h0m0s",
    "check_frequency": "20m0s",
    "source": {
       "bucket": "my_bucket",

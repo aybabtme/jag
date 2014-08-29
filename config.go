@@ -28,8 +28,8 @@ func loadConfig(r io.Reader) (*config, error) {
 	var d struct {
 		RandomSeed     int64     `json:"random_seed"`
 		CheckCount     uint      `json:"check_count"`
-		CheckYoungest  string    `json:"check_younger"`
-		CheckOldest    string    `json:"check_older"`
+		CheckYoungest  string    `json:"check_youngest"`
+		CheckOldest    string    `json:"check_oldest"`
 		CheckFrequency string    `json:"check_frequency"`
 		Source         awsConfig `json:"source"`
 		Destination    awsConfig `json:"destination"`
@@ -68,8 +68,8 @@ func (c *config) MarshalJSON() ([]byte, error) {
 	return json.MarshalIndent(struct {
 		RandomSeed     int64     `json:"random_seed"`
 		CheckCount     uint      `json:"check_count"`
-		CheckYoungest  string    `json:"check_younger"`
-		CheckOldest    string    `json:"check_older"`
+		CheckYoungest  string    `json:"check_youngest"`
+		CheckOldest    string    `json:"check_oldest"`
 		CheckFrequency string    `json:"check_frequency"`
 		Source         awsConfig `json:"source"`
 		Destination    awsConfig `json:"destination"`
