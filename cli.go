@@ -25,6 +25,14 @@ func newApp(abort <-chan struct{}) *cli.App {
 	app.Email = "antoinegrondin@gmail.com"
 	app.Usage = "Audits brigade to see if it does its work properly."
 	app.Version = "0.1"
+	app.Flags = []cli.Flag{cli.BoolFlag{Name: "debug"}}
+	app.Before = func(ctx *cli.Context) error {
+		if ctx.GlobalBool("debug") {
+			log.SetLevel(log.DebugLevel)
+			log.Debug("debug mode enabled")
+		}
+		return nil
+	}
 	app.Commands = []cli.Command{
 		createConfigCommand(),
 		auditCommand(abort),

@@ -111,11 +111,13 @@ func (v *verifier) sampleKeysWithConstraint(r *rand.Rand, accept func(s3.Key) bo
 			return nil, nil
 		default:
 		}
+		log.WithField("samples", len(set)).Debug("sampling a random key")
 		sample, err := v.sampleRandomKey(r, accept)
 		if err != nil {
 			return nil, err
 		}
 		set[*sample] = struct{}{}
+		log.WithField("samples", len(set)).Debug("found a sample")
 	}
 	keys := make([]s3.Key, 0, count)
 	for k := range set {
@@ -131,7 +133,13 @@ func (v *verifier) sampleRandomKey(r *rand.Rand, accept func(s3.Key) bool) (*s3.
 	//     advance the structure of the tree, and if it's not practical to
 	//     traverse the whole tree?
 	maybePickKey := func(depth int, key s3.Key) bool {
-		return r.Float64() < v.probThatKeyAtDepth(depth)
+		p := v.probThatKeyAtDepth(depth)
+		dice := r.Float64()
+		log.WithFields(log.Fields{
+			"dice": dice,
+			"p":    p,
+		}).Warn("rolling dice")
+		return dice <= p
 	}
 
 	var walkNode func(depth int, prefix string) (*s3.Key, bool, error)
@@ -144,6 +152,10 @@ func (v *verifier) sampleRandomKey(r *rand.Rand, accept func(s3.Key) bool) (*s3.
 			return nil, false, nil
 		default:
 		}
+		log.WithFields(log.Fields{
+			"depth":  depth,
+			"prefix": prefix,
+		}).Debug("walking a depth")
 
 		// enumerate the keys and the children from here
 		resp, err := v.src.List(normalizePath(prefix), "/", "", MaxList)
@@ -156,12 +168,21 @@ func (v *verifier) sampleRandomKey(r *rand.Rand, accept func(s3.Key) bool) (*s3.
 			return nil, false, err
 		}
 
+		log.WithFields(log.Fields{
+			"initial": len(resp.Contents),
+			"left":    len(candidates),
+		}).Debug("applied constraint")
+
 		// maybe stop recursing
 		for _, key := range candidates {
 			if picked := maybePickKey(depth, key); picked {
 				return &key, true, nil
 			}
 		}
+		log.WithFields(log.Fields{
+			"depth":  depth,
+			"prefix": prefix,
+		}).Debug("rejected all candidates")
 
 		// otherwise traverse to a random children
 		shuffle(r, resp.CommonPrefixes)
@@ -203,6 +224,7 @@ func (v *verifier) verifyKeysMatch(keys []s3.Key) error {
 }
 
 func (v *verifier) verifyKey(want s3.Key) error {
+	log.WithField("key", want.Key).Debug("verifying a key")
 	res, err := v.dst.List(want.Key, "", "", 1)
 	if err != nil {
 		return err
@@ -239,7 +261,8 @@ func (v *verifier) verifyKey(want s3.Key) error {
 
 func (v *verifier) probThatKeyAtDepth(depth int) float64 {
 	if depth >= len(v.model.depths) {
-		return 0.0 // not predictable with our model
+		log.WithField("depth", depth).Warn("depth not predictable by model")
+		return 0.0
 	}
 	keysAtDepth := v.model.depths[depth]
 	return float64(keysAtDepth) / float64(v.model.keyCount)
