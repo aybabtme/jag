@@ -8,6 +8,7 @@ import (
 )
 
 type bucketModel struct {
+	// TODO add age of keys per bucket/per depth
 	name     string
 	depths   []int
 	keyCount int
