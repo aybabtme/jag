@@ -8,6 +8,7 @@ import (
 )
 
 type bucketModel struct {
+	name     string
 	depths   []int
 	keyCount int
 }
@@ -25,9 +26,10 @@ func (b bucketModel) MarshalJSON() ([]byte, error) {
 		}
 	}
 	return json.MarshalIndent(struct {
+		Name     string       `json:"bucket_name"`
 		Depth    []depthLevel `json:"depths"`
 		KeyCount int          `json:"key_count"`
-	}{Depth: depths, KeyCount: b.keyCount}, "", "   ")
+	}{Name: b.name, Depth: depths, KeyCount: b.keyCount}, "", "   ")
 }
 
 func (b *bucketModel) UnmarshalJSON(p []byte) error {
@@ -36,10 +38,12 @@ func (b *bucketModel) UnmarshalJSON(p []byte) error {
 		Count int `json:"count"`
 	}
 	var d struct {
+		Name     string       `json:"bucket_name"`
 		Depth    []depthLevel `json:"depths"`
 		KeyCount int          `json:"key_count"`
 	}
 	err := json.Unmarshal(p, &d)
+	b.name = d.Name
 	b.depths = make([]int, len(d.Depth))
 	for _, depthL := range d.Depth {
 		b.depths[depthL.Level] = depthL.Count
@@ -48,7 +52,7 @@ func (b *bucketModel) UnmarshalJSON(p []byte) error {
 	return err
 }
 
-func buildModel(keys <-chan interface{}, abort <-chan struct{}) *bucketModel {
+func buildModel(name string, keys <-chan interface{}, abort <-chan struct{}) *bucketModel {
 	log.Info("computing model...")
 	defer log.Info("done!")
 	depthMap := make(map[int]int)
@@ -76,6 +80,7 @@ loop:
 	}
 
 	return &bucketModel{
+		name:     name,
 		depths:   depths,
 		keyCount: count,
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	log "github.com/Sirupsen/logrus"
 	"launchpad.net/goamz/aws"
 	"launchpad.net/goamz/s3"
@@ -34,14 +35,19 @@ type verifier struct {
 	model bucketModel
 }
 
-func newVerifier(cfg *config, model bucketModel, abort <-chan struct{}) *verifier {
+func newVerifier(cfg *config, model bucketModel, abort <-chan struct{}) (*verifier, error) {
+	if model.name != cfg.Source.Bucket {
+		return nil, fmt.Errorf("can't verify bucket %q with a model built for bucket %q",
+			cfg.Source.Bucket, model.name)
+	}
+
 	return &verifier{
 		cfg:   cfg,
 		abort: abort,
 		src:   awsBucket(cfg.Source),
 		dst:   awsBucket(cfg.Destination),
 		model: model,
-	}
+	}, nil
 }
 
 func (v *verifier) execute() error {

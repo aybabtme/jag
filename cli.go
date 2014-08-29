@@ -111,12 +111,15 @@ func auditCommand(abort <-chan struct{}) cli.Command {
 		cfg := mustConfig(ctx, cfgFlag)
 		var model *bucketModel
 		if ctx.String(buildModelFlag.Name) != "" {
-			model = mustBuildModel(ctx, buildModelFlag, abort)
+			model = mustBuildModel(ctx, cfg.Source.Bucket, buildModelFlag, abort)
 		} else {
 			model = mustRetrieveModel(ctx, modelFlag)
 		}
 
-		v := newVerifier(cfg, *model, abort)
+		v, err := newVerifier(cfg, *model, abort)
+		if err != nil {
+			fail(ctx, "error: can't create verifier, %v", err)
+		}
 		if err := v.execute(); err != nil {
 			log.Fatalln(err)
 		}
@@ -134,13 +137,18 @@ a model built from an existing list of the source bucket.`),
 }
 
 func printModelCommand(abort <-chan struct{}) cli.Command {
-	modelFlag := cli.StringFlag{
+	fileFlag := cli.StringFlag{
 		Name:  "file",
 		Usage: "path to a gzip'd JSON file representing all the keys in the source bucket",
 	}
+	bucketFlag := cli.StringFlag{
+		Name:  "bucket",
+		Usage: "name of the bucket this model will represent",
+	}
 
 	doPrintModel := func(ctx *cli.Context) {
-		model := mustBuildModel(ctx, modelFlag, abort)
+		bucketName := mustString(ctx, bucketFlag)
+		model := mustBuildModel(ctx, bucketName, fileFlag, abort)
 		data, err := model.MarshalJSON()
 		if err != nil {
 			fail(ctx, "bug: can't create model JSON: %v", err)
@@ -156,7 +164,7 @@ func printModelCommand(abort <-chan struct{}) cli.Command {
 		Description: strings.TrimSpace(`
 Takes the listing of a bucket, in JSON form, and computes statistical data
 about it, then prints them.`),
-		Flags:  []cli.Flag{modelFlag},
+		Flags:  []cli.Flag{fileFlag, bucketFlag},
 		Action: doPrintModel,
 	}
 }
@@ -188,7 +196,7 @@ func mustConfig(ctx *cli.Context, f cli.StringFlag) *config {
 	return cfg
 }
 
-func mustBuildModel(ctx *cli.Context, f cli.StringFlag, abort <-chan struct{}) *bucketModel {
+func mustBuildModel(ctx *cli.Context, bucketName string, f cli.StringFlag, abort <-chan struct{}) *bucketModel {
 	filename := mustString(ctx, f)
 	file := mustOpen(ctx, filename)
 	defer func() { _ = file.Close() }()
@@ -203,8 +211,7 @@ func mustBuildModel(ctx *cli.Context, f cli.StringFlag, abort <-chan struct{}) *
 		rd = file
 	}
 
-	n := runtime.NumCPU()
-	ifaceC, errc := parajson.Decode(rd, n, func() interface{} {
+	ifaceC, errc := parajson.Decode(rd, runtime.NumCPU(), func() interface{} {
 		return &s3.Key{}
 	})
 
@@ -215,7 +222,7 @@ func mustBuildModel(ctx *cli.Context, f cli.StringFlag, abort <-chan struct{}) *
 		}
 		sem <- struct{}{}
 	}()
-	model := buildModel(ifaceC, abort)
+	model := buildModel(bucketName, ifaceC, abort)
 	<-sem
 	return model
 }
